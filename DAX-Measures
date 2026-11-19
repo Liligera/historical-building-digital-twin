@@ -1,0 +1,223 @@
+// All measures. Paste each block separately via New measure in Power BI.
+
+آخرین ردیف زمانی =
+CALCULATE ( MAX ( dim_Date[ردیف_زمانی] ), ALL ( dim_Date ) )
+
+ردیف زمانی انتخابی =
+IF (
+    ISFILTERED ( dim_Date[فصل] ) || ISFILTERED ( dim_Date[سال_شمسی] ),
+    MAX ( dim_Date[ردیف_زمانی] ),
+    [آخرین ردیف زمانی]
+)
+
+میانگین RUI =
+VAR r = [ردیف زمانی انتخابی]
+RETURN CALCULATE ( AVERAGE ( fact_Seasonal[RUI] ),
+                   dim_Date[ردیف_زمانی] = r )
+
+نقاط قرمز =
+VAR r = [ردیف زمانی انتخابی]
+RETURN CALCULATE ( COUNTROWS ( fact_Seasonal ),
+    fact_Seasonal[سطح_هشدار] = "قرمز",
+    dim_Date[ردیف_زمانی] = r ) + 0
+
+کل نقاط پایش =
+VAR r = [ردیف زمانی انتخابی]
+RETURN CALCULATE ( COUNTROWS ( fact_Seasonal ),
+                   dim_Date[ردیف_زمانی] = r )
+
+درصد نقاط قرمز = DIVIDE ( [نقاط قرمز], [کل نقاط پایش] )
+تعداد بنا = DISTINCTCOUNT ( dim_Building[کد_بنا] )
+تعداد نقاط = DISTINCTCOUNT ( dim_Point[کد_نقطه] )
+
+تعداد بنا = DISTINCTCOUNT ( dim_Building[کد_بنا] )
+تعداد نقاط = DISTINCTCOUNT ( dim_Point[کد_نقطه] )
+
+آخرین پایش =
+LOOKUPVALUE (
+    dim_Date[تاریخ_شمسی],
+    dim_Date[ردیف_زمانی], [آخرین ردیف زمانی]
+)
+
+بحرانی‌ترین بنا =
+VAR t = ADDCOLUMNS ( VALUES ( dim_Building[نام_بنا] ),
+                     "@rui", [میانگین RUI] )
+RETURN MAXX ( TOPN ( 1, t, [@rui], DESC ), dim_Building[نام_بنا] )
+
+میانگین رطوبت اشباع =
+VAR r = [ردیف زمانی انتخابی]
+RETURN CALCULATE ( AVERAGE ( fact_Seasonal[رطوبت_اشباع_درصد] ),
+                   dim_Date[ردیف_زمانی] = r )
+
+وضعیت =
+VAR x = [میانگین RUI]
+RETURN IF ( ISBLANK ( x ), BLANK (),
+  SWITCH ( TRUE (), x < 3.5, "ایمن", x < 4.5, "پایش عادی",
+                    x < 5.5, "مداخله", "بحرانی" ) )
+
+رنگ وضعیت =
+VAR x = [میانگین RUI]
+RETURN IF ( ISBLANK ( x ), BLANK (),
+  SWITCH ( TRUE (), x < 3.5, "#2E9E73", x < 4.5, "#E8C547",
+                    x < 5.5, "#E8833A", "#D64545" ) )
+
+نوع آسیب =
+CONCATENATEX ( VALUES ( fact_Measurement[کد_آسیب] ),
+  LOOKUPVALUE ( dim_Damage[نام_آسیب], dim_Damage[کد_آسیب],
+                fact_Measurement[کد_آسیب] ), "، " )
+
+نام بنای انتخاب‌شده =
+SELECTEDVALUE ( dim_Building[نام_بنا], "همه‌ی بناها" )
+
+رتبه RUI بنا =
+IF ( HASONEVALUE ( dim_Building[نام_بنا] ),
+     RANKX ( ALL ( dim_Building[نام_بنا] ), [میانگین RUI] ) )
+
+تعداد اندازه‌گیری میدانی = COUNTROWS ( fact_Measurement )
+میانگین شدت آسیب = AVERAGE ( fact_Measurement[شدت_آسیب_عددی] )
+میانگین RUI روند = AVERAGE ( fact_Seasonal[RUI] )
+
+بالاترین RUI نقطه = MAX ( fact_Seasonal[RUI] )
+
+تغییر RUI نسبت به سال قبل =
+VAR r   = [ردیف زمانی انتخابی]
+VAR cur = CALCULATE ( AVERAGE ( fact_Seasonal[RUI] ),
+                      dim_Date[ردیف_زمانی] = r )
+VAR prv = CALCULATE ( AVERAGE ( fact_Seasonal[RUI] ),
+                      ALL ( dim_Date ),
+                      dim_Date[ردیف_زمانی] = r - 4 )
+RETURN IF ( NOT ISBLANK ( prv ), cur - prv )
+
+فصل پرریسک =
+MAXX ( TOPN ( 1, ALL ( dim_Date[فصل] ),
+              CALCULATE ( AVERAGE ( fact_Seasonal[RUI] ) ), DESC ),
+       dim_Date[فصل] )
+
+شیب روند RUI =
+VAR tbl =
+    CALCULATETABLE (
+        ADDCOLUMNS (
+            VALUES ( dim_Date[ردیف_زمانی] ),
+            "@y", CALCULATE ( AVERAGE ( fact_Seasonal[RUI] ) )
+        ),
+        ALL ( dim_Date )
+    )
+VAR n   = COUNTROWS ( tbl )
+VAR sx  = SUMX ( tbl, dim_Date[ردیف_زمانی] )
+VAR sy  = SUMX ( tbl, [@y] )
+VAR sxy = SUMX ( tbl, dim_Date[ردیف_زمانی] * [@y] )
+VAR sxx = SUMX ( tbl, dim_Date[ردیف_زمانی] ^ 2 )
+RETURN DIVIDE ( n * sxy - sx * sy, n * sxx - sx ^ 2 )
+
+RUI پیش‌بینی خطی =
+VAR tbl =
+    CALCULATETABLE (
+        ADDCOLUMNS (
+            VALUES ( dim_Date[ردیف_زمانی] ),
+            "@y", CALCULATE ( AVERAGE ( fact_Seasonal[RUI] ) )
+        ),
+        ALL ( dim_Date )
+    )
+VAR n     = COUNTROWS ( tbl )
+VAR sx    = SUMX ( tbl, dim_Date[ردیف_زمانی] )
+VAR sy    = SUMX ( tbl, [@y] )
+VAR sxy   = SUMX ( tbl, dim_Date[ردیف_زمانی] * [@y] )
+VAR sxx   = SUMX ( tbl, dim_Date[ردیف_زمانی] ^ 2 )
+VAR slope = DIVIDE ( n * sxy - sx * sy, n * sxx - sx ^ 2 )
+VAR icpt  = DIVIDE ( sy - slope * sx, n )
+RETURN icpt + slope * ( [آخرین ردیف زمانی] + [افق پیش‌بینی Value] / 3 )
+
+نقاط در معرض شکست =
+COUNTROWS (
+    FILTER ( VALUES ( dim_Point[کد_نقطه] ),
+             [RUI پیش‌بینی خطی] >= [آستانه شکست Value] )
+)
+
+ماه تا نقطه شکست =
+VAR s   = [شیب روند RUI]
+VAR h   = [افق پیش‌بینی Value]
+VAR cur = [RUI پیش‌بینی خطی] - s * h / 3
+RETURN IF ( s > 0,
+    MAX ( 0, DIVIDE ( [آستانه شکست Value] - cur, s ) * 3 ) )
+
+تعداد مداخلات = COUNTROWS ( fact_Intervention )
+
+هزینه کل مداخلات =
+SUM ( fact_Intervention[هزینه_واقعی_میلیون_تومان] )
+
+میانگین بهبود مداخله =
+AVERAGE ( fact_Intervention[درصد_بهبود] )
+
+نقاط نارنجی و قرمز بدون مداخله =
+VAR r = [ردیف زمانی انتخابی]
+RETURN COUNTROWS ( FILTER ( VALUES ( dim_Point[کد_نقطه] ),
+  CALCULATE ( COUNTROWS ( fact_Seasonal ),
+    fact_Seasonal[سطح_هشدار] IN { "نارنجی", "قرمز" },
+    dim_Date[ردیف_زمانی] = r ) > 0
+  && CALCULATE ( COUNTROWS ( fact_Intervention ) ) = 0 ) )
+
+بودجه نجات‌یافته =
+SUMX (
+    fact_Intervention,
+    fact_Intervention[هزینه_واقعی_میلیون_تومان]
+        * ( [ضریب تأخیر Value] - 1 )
+        * fact_Intervention[درصد_بهبود] / 100
+)
+
+خالص منفعت = [بودجه نجات‌یافته] - [هزینه کل مداخلات]
+
+نسبت منفعت به هزینه =
+DIVIDE ( [بودجه نجات‌یافته], [هزینه کل مداخلات] )
+
+ضریب سر به سر =
+1 + DIVIDE (
+    [هزینه کل مداخلات],
+    SUMX ( fact_Intervention,
+           fact_Intervention[هزینه_واقعی_میلیون_تومان]
+             * fact_Intervention[درصد_بهبود] / 100 )
+)
+
+هزینه مرمت بنا =
+SUM ( dim_Building[هزینه_مرمت_تخمینی_میلیون_تومان] )
+
+امتیاز اولویت =
+VAR wR = [وزن ریسک Value]
+VAR wH = [وزن اهمیت تاریخی Value]
+VAR wB = [وزن بودجه Value]
+VAR R  = DIVIDE ( [میانگین RUI], 10 )
+VAR H  = DIVIDE ( AVERAGE ( dim_Building[وزن_ارزش_تاریخی] ),
+         MAXX ( ALL ( dim_Building ), dim_Building[وزن_ارزش_تاریخی] ) )
+VAR B  = 1 - DIVIDE ( [هزینه مرمت بنا],
+         MAXX ( ALL ( dim_Building ),
+                dim_Building[هزینه_مرمت_تخمینی_میلیون_تومان] ) )
+RETURN DIVIDE ( wR * R + wH * H + wB * B, wR + wH + wB ) * 100
+
+رتبه اولویت =
+RANKX ( ALL ( dim_Building[نام_بنا] ), [امتیاز اولویت] )
+
+بودجه تجمعی =
+VAR sc = [امتیاز اولویت]
+RETURN SUMX (
+    FILTER ( ALL ( dim_Building[نام_بنا] ), [امتیاز اولویت] >= sc ),
+    [هزینه مرمت بنا] )
+
+وضعیت بودجه =
+IF ( [بودجه تجمعی] <= [بودجه در دسترس Value],
+     "در بودجه", "خارج از بودجه" )
+
+رنگ وضعیت بودجه =
+IF ( [بودجه تجمعی] <= [بودجه در دسترس Value],
+     "#2F6FB5", "#B8C4D3" )
+
+تعداد بنا در بودجه =
+COUNTROWS ( FILTER ( ALL ( dim_Building[نام_بنا] ),
+    [بودجه تجمعی] <= [بودجه در دسترس Value] ) )
+
+بودجه مصرف‌شده =
+SUMX ( FILTER ( ALL ( dim_Building[نام_بنا] ),
+    [بودجه تجمعی] <= [بودجه در دسترس Value] ), [هزینه مرمت بنا] )
+
+بنای اول صف مرمت =
+VAR t = ADDCOLUMNS ( VALUES ( dim_Building[نام_بنا] ),
+                     "@s", [امتیاز اولویت] )
+RETURN MAXX ( TOPN ( 1, t, [@s], DESC ), dim_Building[نام_بنا] )
